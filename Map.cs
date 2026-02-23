@@ -12,6 +12,7 @@ public sealed class Map : ManagedBehaviour
 {
     public UImGui.UImGui _imgui { get; set; }
     public bool IsEnabled { get; set; } = true;
+    public Dictionary<AreaDefinition, AreaMapData> MapCache { get; } = new();
 
     public override void ManagedOnEnable()
     {
@@ -43,6 +44,79 @@ public sealed class Map : ManagedBehaviour
         new Vector2(4.0f, 8.0f)
     ];
 
+    public AreaMapData CreateAreaMapData(AreaDefinition area)
+    {
+        Dictionary<SceneData, SceneParent> sceneParents = SceneParent._sceneParents;
+        // The "root scene" of an area is the SceneParent with no _parentData
+        SceneData rootScene = null;
+        List<SceneData> childScenes = new List<SceneData>();
+
+        // TODO cache all this data per-AreaDefinition
+        float minX = Single.PositiveInfinity;
+        float maxX = Single.NegativeInfinity;
+        float minZ = Single.PositiveInfinity;
+        float maxZ = Single.NegativeInfinity;
+        Dictionary<SceneData, PathsD> worldBounds = new();
+        Dictionary<SceneData, Collectible[]> collectibles = new();
+        Dictionary<SceneData, Capturable[]> capturables = new();
+
+        foreach (var (sceneData, sceneParent) in sceneParents)
+        {
+            if (sceneData._area == area)
+            {
+                if (sceneData._parentData == null)
+                {
+                    rootScene = sceneData;
+                }
+                else
+                {
+                    childScenes.Add(sceneData);
+
+                    List<Collider> colliders = sceneParent._entranceVolumes.SelectMany(v => v._colliders).ToList();
+
+                    PathsD rawBounds = new PathsD();
+                    foreach (Collider collider in colliders)
+                    {
+
+                        float thisMinX = collider.bounds.min.x;
+                        float thisMinZ = collider.bounds.min.z;
+                        float thisMaxX = collider.bounds.max.x;
+                        float thisMaxZ = collider.bounds.max.z;
+                        
+                        rawBounds.Add(new PathD([
+                            new PointD(thisMinX, thisMinZ),
+                            new PointD(thisMaxX, thisMinZ),
+                            new PointD(thisMaxX, thisMaxZ),
+                            new PointD(thisMinX, thisMaxZ)
+                        ]));
+
+                        minX = Math.Min(minX, thisMinX);
+                        maxX = Math.Max(maxX, thisMaxX);
+                        minZ = Math.Min(minZ, thisMinZ);
+                        maxZ = Math.Max(maxZ, thisMaxZ);
+                    }
+
+                    PathsD unionedBounds = Clipper.Union(rawBounds, FillRule.NonZero);
+
+                    worldBounds[sceneData] = unionedBounds;
+                    collectibles[sceneData] = sceneParent._activeParent.GetComponentsInChildren<Collectible>(true);
+                    capturables[sceneData] = sceneParent._activeParent.GetComponentsInChildren<Capturable>(true);
+                }
+            }
+        }
+
+        return new AreaMapData(minX, maxX, minZ, maxZ, rootScene, childScenes, worldBounds, collectibles, capturables);
+    }
+    
+    public AreaMapData GetOrCreateAreaMapData(AreaDefinition area)
+    {
+        if (MapCache.TryGetValue(area, out var areaMapData)) return areaMapData;
+
+        AreaMapData next = CreateAreaMapData(area);
+        MapCache.Add(area, next);
+        return next;
+    }
+    
     public bool CheckForEnable()
     {
         MainMenu mainMenu = Manager._instance._mainMenu;
@@ -81,64 +155,12 @@ public sealed class Map : ManagedBehaviour
         
         if (ImGui.Begin("Map"))
         {
-            Dictionary<SceneData, SceneParent> sceneParents = SceneParent._sceneParents;
-            // The "root scene" of an area is the SceneParent with no _parentData
-            SceneData rootScene = null;
-            List<SceneData> childScenes = new List<SceneData>();
+            AreaMapData amd = GetOrCreateAreaMapData(here);
+
+            string rootSceneName = amd.rootScene.name;
             
-            Vector3 currentPosition = Manager._instance._primaryPlayerMachine._position;
-
-            // TODO cache all this data per-AreaDefinition
-            float minX = Single.PositiveInfinity;
-            float maxX = Single.NegativeInfinity;
-            float minZ = Single.PositiveInfinity;
-            float maxZ = Single.NegativeInfinity;
-            Dictionary<SceneData, List<Collider>> entranceColliders = new();
-            Dictionary<SceneData, List<Bounds>> entranceBounds = new();
-            Dictionary<SceneData, Collectible[]> collectibles = new();
-            Dictionary<SceneData, Capturable[]> capturables = new();
-            
-            foreach (var (sceneData, sceneParent) in sceneParents)
-            {
-                if (sceneData._area == here)
-                {
-                    if (sceneData._parentData == null)
-                    {
-                        rootScene = sceneData;
-                    }
-                    else
-                    {
-                        childScenes.Add(sceneData);
-
-                        List<Collider> colliders = sceneParent._entranceVolumes.SelectMany(v => v._colliders).ToList();
-                        entranceColliders[sceneData] = colliders;
-                        entranceBounds[sceneData] = new List<Bounds>();
-
-                        foreach (Collider collider in colliders)
-                        {
-                            entranceBounds[sceneData].Add(collider.bounds);
-
-                            float thisMinX = collider.bounds.min.x;
-                            float thisMinZ = collider.bounds.min.z;
-                            float thisMaxX = collider.bounds.max.x;
-                            float thisMaxZ = collider.bounds.max.z;
-                            
-                            minX = Math.Min(minX, thisMinX);
-                            maxX = Math.Max(maxX, thisMaxX);
-                            minZ = Math.Min(minZ, thisMinZ);
-                            maxZ = Math.Max(maxZ, thisMaxZ);
-                        }
-
-                        collectibles[sceneData] = sceneParent._activeParent.GetComponentsInChildren<Collectible>(true);
-                        capturables[sceneData] = sceneParent._activeParent.GetComponentsInChildren<Capturable>(true);
-                    }
-                }
-            }
-
-            string rootSceneName = rootScene.name;
-            
-            float xWidth = maxX - minX;
-            float zHeight = maxZ - minZ;
+            float xWidth = amd.maxX - amd.minX;
+            float zHeight = amd.maxZ - amd.minZ;
 
             Vector2 imguiCursorScreenPos = ImGui.GetCursorScreenPos();
             Vector2 imguiRemainingSpace = ImGui.GetContentRegionAvail();
@@ -160,45 +182,30 @@ public sealed class Map : ManagedBehaviour
             
             ImDrawListPtr imDrawList = ImGui.GetWindowDrawList();
             imDrawList.PushClipRect(imguiCursorScreenPos, imguiBottomRight);
-            for (var i = 0; i < childScenes.Count; i++)
+            for (var i = 0; i < amd.childScenes.Count; i++)
             {
-                SceneData childScene = childScenes[i];
-                PathsD boundsPaths = new PathsD();
+                SceneData childScene = amd.childScenes[i];
 
-                foreach (Bounds bounds in entranceBounds[childScene])
+                PathsD screenPaths = new PathsD();
+                foreach (PathD path in amd.worldBounds[childScene])
                 {
-                    float minRelativeWorldX = bounds.min.x - minX;
-                    float minRelativeWorldZ = bounds.min.z - minZ;
-                    float maxRelativeWorldX = bounds.max.x - minX;
-                    float maxRelativeWorldZ = bounds.max.z - minZ;
-
-                    float minRelativeScreenX = trueScale * minRelativeWorldX;
-                    float minRelativeScreenY = trueScale * minRelativeWorldZ;
-                    float maxRelativeScreenX = trueScale * maxRelativeWorldX;
-                    float maxRelativeScreenY = trueScale * maxRelativeWorldZ;
-
-                    float minScreenX = mapTopLeft.x + minRelativeScreenX;
-                    float minScreenY = mapBottomRight.y - minRelativeScreenY;
-                    float maxScreenX = mapTopLeft.x + maxRelativeScreenX;
-                    float maxScreenY = mapBottomRight.y - maxRelativeScreenY;
-
-                    PathD path = new PathD([
-                        new PointD(minScreenX, minScreenY),
-                        new PointD(minScreenX, maxScreenY),
-                        new PointD(maxScreenX, maxScreenY),
-                        new PointD(maxScreenX, minScreenY),
-                    ]);
-                    boundsPaths.Add(path);
-                }
-
-                PathsD union = Clipper.Union(boundsPaths, FillRule.NonZero);
-                foreach (PathD path in union)
-                {
+                    PathD screenPath = new PathD();
                     foreach (PointD point in path)
                     {
-                        imDrawList.PathLineTo(new Vector2((float)point.x, (float)point.y));
-                    }
+                        float pRelativeWorldX = (float)point.x - amd.minX;
+                        float pRelativeWorldZ = (float)point.y - amd.minZ;
 
+                        float pRelativeScreenX = trueScale * pRelativeWorldX;
+                        float pRelativeScreenY = trueScale * pRelativeWorldZ;
+
+                        float pScreenX = mapTopLeft.x + pRelativeScreenX;
+                        float pScreenY = mapBottomRight.y - pRelativeScreenY;
+                        
+                        screenPath.Add(new PointD(pScreenX, pScreenY));
+                        imDrawList.PathLineTo(new Vector2((float)pScreenX, (float)pScreenY));
+                    }
+                    
+                    screenPaths.Add(screenPath);
                     imDrawList.PathStroke(Colors[i % Colors.Length], ImDrawFlags.Closed);
                 }
 
@@ -208,12 +215,12 @@ public sealed class Map : ManagedBehaviour
                     mapName = mapName[(rootSceneName.Length + 1)..];
                 }
 
-                int numCoinsCollected = collectibles[childScene].Count(collectible => collectible._collected);
-                int numCoinsTotal = collectibles[childScene].Length;
+                int numCoinsCollected = amd.collectibles[childScene].Count(collectible => collectible._collected);
+                int numCoinsTotal = amd.collectibles[childScene].Length;
                 float numCoinsFraction = (float)numCoinsCollected / (float)numCoinsTotal;
                 int numCoinsPercent = (int)(numCoinsFraction * 100);
-                int numCapturablesCollected = capturables[childScene].Count(capturable => capturable._state == Capturable.State.Captured);
-                int numCapturablesTotal = capturables[childScene].Length;
+                int numCapturablesCollected = amd.capturables[childScene].Count(capturable => capturable._state == Capturable.State.Captured);
+                int numCapturablesTotal = amd.capturables[childScene].Length;
                 float numCapturablesFraction = (float)numCapturablesCollected / (float)numCapturablesTotal;
                 int numCapturablesPercent = (int)(numCapturablesFraction * 100);
 
@@ -224,7 +231,7 @@ public sealed class Map : ManagedBehaviour
                                    """;
                 Vector2 areaTextSize = ImGui.CalcTextSize(areaText);
                 
-                RectD screenBounds = Clipper.GetBounds(union);
+                RectD screenBounds = Clipper.GetBounds(screenPaths);
                 Vector2 centerPoint = new Vector2(
                     (float)(screenBounds.left + screenBounds.right) / 2.0f,
                     (float)(screenBounds.top + screenBounds.bottom) / 2.0f
@@ -234,8 +241,8 @@ public sealed class Map : ManagedBehaviour
                 imDrawList.AddText(textPos, Colors[i % Colors.Length], areaText);
             }
 
-            float playerRelativeWorldX = Manager._instance._primaryPlayerMachine._position.x - minX;
-            float playerRelativeWorldZ = Manager._instance._primaryPlayerMachine._position.z - minZ;
+            float playerRelativeWorldX = Manager._instance._primaryPlayerMachine._position.x - amd.minX;
+            float playerRelativeWorldZ = Manager._instance._primaryPlayerMachine._position.z - amd.minZ;
             float playerRelativeScreenX = trueScale * playerRelativeWorldX;
             float playerRelativeScreenY = trueScale * playerRelativeWorldZ;
             float playerScreenX = mapTopLeft.x + playerRelativeScreenX;
