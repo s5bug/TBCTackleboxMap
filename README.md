@@ -1,8 +1,8 @@
-﻿### ⚠ THIS IS A TEMPLATE REPOSITORY! Do not fork, instead use the "Use this template" button!
+﻿# TBCTackleboxMap
 
-# TBCTackleboxPlugin
+## development
 
-Edit `TBCTackleboxPlugin.csproj.user` correcting the path to your The Big Catch Tacklebox folder. An example
+Edit `TBCTackleboxMap.csproj.user` correcting the path to your The Big Catch Tacklebox folder. An example
 with Windows Steam on the C drive is shown below:
 
 ```msbuild

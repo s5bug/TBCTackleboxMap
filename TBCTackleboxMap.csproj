@@ -2,8 +2,8 @@
 
   <PropertyGroup>
     <TargetFramework>netstandard2.1</TargetFramework>
-    <AssemblyName>TBCTackleboxPlugin</AssemblyName>
-    <Product>My first plugin</Product>
+    <AssemblyName>TBCTackleboxMap</AssemblyName>
+    <Product>TBC Tacklebox Map</Product>
     <Version>1.0.0</Version>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <LangVersion>latest</LangVersion>
@@ -12,7 +12,7 @@
       https://nuget.bepinex.dev/v3/index.json;
       https://nuget.samboy.dev/v3/index.json
     </RestoreAdditionalProjectSources>
-    <RootNamespace>TBCTackleboxPlugin</RootNamespace>
+    <PackageId>TBCTackleboxMap</PackageId>
   </PropertyGroup>
 
   <Import Project="$(MSBuildProjectFullPath).user" Condition="Exists('$(MSBuildProjectFullPath).user')"/>
@@ -29,6 +29,10 @@
     </PackageReference>
     <PackageReference Include="BepInEx.Core" Version="5.*" />
     <PackageReference Include="BepInEx.PluginInfoProps" Version="2.*" />
+
+    <PackageReference Include="Clipper2" Version="2.0.0" GeneratePathProperty="true">
+      <Private>true</Private>
+    </PackageReference>
   </ItemGroup>
 
   <ItemGroup>
@@ -47,8 +51,16 @@
       <HintPath>$(ManagedPath)/UnityEngine.CoreModule.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="UnityEngine.PhysicsModule">
+      <HintPath>$(ManagedPath)/UnityEngine.PhysicsModule.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
     <Reference Include="Eflatun.SceneReference">
       <HintPath>$(ManagedPath)/Eflatun.SceneReference.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <Reference Include="ImGui.NET">
+      <HintPath>$(ManagedPath)/ImGui.NET.dll</HintPath>
       <Private>false</Private>
     </Reference>
     <Reference Include="Sirenix.OdinInspector.Attributes">
@@ -63,10 +75,18 @@
       <HintPath>$(ManagedPath)/Sirenix.Serialization.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="UImGui">
+      <HintPath>$(ManagedPath)/UImGui.dll</HintPath>
+      <Private>false</Private>
+    </Reference>
   </ItemGroup>
 
   <!-- auto copy to bepinex folder; you don't need this but it's helpful -->
   <Target Name="PostBuild" AfterTargets="PostBuildEvent">
+    <ItemGroup>
+      <ClipperFiles Include="$(PkgClipper2)\lib\netstandard2.0\Clipper2Lib.dll" />
+    </ItemGroup>
+    <Copy SourceFiles="@(ClipperFiles)" DestinationFolder="$(OutputPath)" />
     <Exec Command="xcopy /Y /I &quot;$(TargetDir)&quot; &quot;$(TbcTackleboxPath)/BepInEx/plugins/$(AssemblyName)&quot;" Condition="'$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::Windows)))'" />
   </Target>
 </Project>

@@ -1,0 +1,246 @@
+﻿using System;
+using System.Collections.Generic;
+using System.Linq;
+using Clipper2Lib;
+using Eflatun.SceneReference;
+using ImGuiNET;
+using UnityEngine;
+
+namespace TBCTackleboxMap;
+
+public sealed class Map : ManagedBehaviour
+{
+    public UImGui.UImGui _imgui { get; set; }
+    public bool IsEnabled { get; set; } = true;
+
+    public override void ManagedOnEnable()
+    {
+        this._imgui.Layout += Layout;
+    }
+
+    public override void ManagedOnDisable()
+    {
+        this._imgui.Layout -= Layout;
+    }
+
+    private static readonly uint[] Colors =
+    [
+        ImGui.GetColorU32(new Vector4(191.0f / 255.0f, 97.0f / 255.0f, 106.0f / 255.0f, 1.0f)),
+        ImGui.GetColorU32(new Vector4(208.0f / 255.0f, 135.0f / 255.0f, 112.0f / 255.0f, 1.0f)),
+        ImGui.GetColorU32(new Vector4(235.0f / 255.0f, 203.0f / 255.0f, 139.0f / 255.0f, 1.0f)),
+        ImGui.GetColorU32(new Vector4(163.0f / 255.0f, 190.0f / 255.0f, 140.0f / 255.0f, 1.0f)),
+        ImGui.GetColorU32(new Vector4(143.0f / 255.0f, 188.0f / 255.0f, 187.0f / 255.0f, 1.0f)),
+        ImGui.GetColorU32(new Vector4(129.0f / 255.0f, 161.0f / 255.0f, 193.0f / 255.0f, 1.0f)),
+        ImGui.GetColorU32(new Vector4(180.0f / 255.0f, 142.0f / 255.0f, 173.0f / 255.0f, 1.0f))
+    ];
+    
+    // Arrow points where 1 in the -Y direction is forward
+    private static readonly Vector2[] Arrow =
+    [
+        new Vector2(0.0f, -8.0f),
+        new Vector2(-4.0f, 8.0f),
+        new Vector2(0.0f, 2.0f),
+        new Vector2(4.0f, 8.0f)
+    ];
+
+    public bool CheckForEnable()
+    {
+        MainMenu mainMenu = Manager._instance._mainMenu;
+        
+        // Only show during gameplay
+        if (mainMenu._currentState != mainMenu._gameplayState && mainMenu._currentState != mainMenu._inGameState)
+            return false;
+
+        PlayerInput playerInput = Manager.GetGameInput().PrimaryPlayerInput;
+
+        if (Manager._instance._timeManagement._gamePaused)
+        {
+            // If we're paused
+            // Check for LB press
+            if (playerInput._cameraInputs._lockOn._wasPressed)
+            {
+                IsEnabled = !IsEnabled;
+            }
+
+            return IsEnabled;
+        }
+        else
+        {
+            // If we're not paused
+            // Check for Tether and Interact held
+            return playerInput._movementInputs._tether._currentlyHeld && playerInput._movementInputs._interact._currentlyHeld;
+        }
+    }
+
+    public void Layout(UImGui.UImGui ui)
+    {
+        if (!CheckForEnable()) return;
+
+        SaveData currentSaveData = Manager._instance._saveManager._currentSaveData;
+        if (!currentSaveData.TryGetLastVisitedArea(out AreaDefinition here)) return;
+        
+        if (ImGui.Begin("Map"))
+        {
+            Dictionary<SceneData, SceneParent> sceneParents = SceneParent._sceneParents;
+            // The "root scene" of an area is the SceneParent with no _parentData
+            SceneData rootScene = null;
+            List<SceneData> childScenes = new List<SceneData>();
+            
+            Vector3 currentPosition = Manager._instance._primaryPlayerMachine._position;
+
+            float minX = Single.PositiveInfinity;
+            float maxX = Single.NegativeInfinity;
+            float minZ = Single.PositiveInfinity;
+            float maxZ = Single.NegativeInfinity;
+            Dictionary<SceneData, List<Collider>> entranceColliders = new();
+            Dictionary<SceneData, List<Bounds>> entranceBounds = new();
+            
+            foreach (var (sceneData, sceneParent) in sceneParents)
+            {
+                if (sceneData._area == here)
+                {
+                    if (sceneData._parentData == null)
+                    {
+                        rootScene = sceneData;
+                    }
+                    else
+                    {
+                        childScenes.Add(sceneData);
+
+                        List<Collider> colliders = sceneParent._entranceVolumes.SelectMany(v => v._colliders).ToList();
+                        entranceColliders[sceneData] = colliders;
+                        entranceBounds[sceneData] = new List<Bounds>();
+
+                        foreach (Collider collider in colliders)
+                        {
+                            entranceBounds[sceneData].Add(collider.bounds);
+
+                            float thisMinX = collider.bounds.min.x;
+                            float thisMinZ = collider.bounds.min.z;
+                            float thisMaxX = collider.bounds.max.x;
+                            float thisMaxZ = collider.bounds.max.z;
+                            
+                            minX = Math.Min(minX, thisMinX);
+                            maxX = Math.Max(maxX, thisMaxX);
+                            minZ = Math.Min(minZ, thisMinZ);
+                            maxZ = Math.Max(maxZ, thisMaxZ);
+                        }
+                    }
+                }
+            }
+
+            string rootSceneName = rootScene.name;
+            
+            float xWidth = maxX - minX;
+            float zHeight = maxZ - minZ;
+
+            Vector2 imguiCursorScreenPos = ImGui.GetCursorScreenPos();
+            Vector2 imguiRemainingSpace = ImGui.GetContentRegionAvail();
+            Vector2 imguiBottomRight = imguiCursorScreenPos + imguiRemainingSpace;
+
+            const float mapPadding = 4.0f;
+            Vector2 mapTopLeft = imguiCursorScreenPos + new Vector2(mapPadding, mapPadding);
+            Vector2 mapBottomRight = imguiBottomRight - new Vector2(mapPadding, mapPadding);
+            Vector2 mapSpace = mapBottomRight - mapTopLeft;
+
+            float xToFit = mapSpace.x / xWidth;
+            float zToFit = mapSpace.y / zHeight;
+            float trueScale = Math.Min(xToFit, zToFit);
+            
+            // to map a world space (x, z) to a screen space (x, y)
+            // 1. make all coordinates relative to minX, minZ, i.e. subtract minX from X and minZ from Z
+            // 2. scale by trueScale
+            // 3. add imguiCursorScreenPos
+            
+            ImDrawListPtr imDrawList = ImGui.GetWindowDrawList();
+            imDrawList.PushClipRect(imguiCursorScreenPos, imguiBottomRight);
+            for (var i = 0; i < childScenes.Count; i++)
+            {
+                SceneData childScene = childScenes[i];
+                PathsD boundsPaths = new PathsD();
+
+                foreach (Bounds bounds in entranceBounds[childScene])
+                {
+                    float minRelativeWorldX = bounds.min.x - minX;
+                    float minRelativeWorldZ = bounds.min.z - minZ;
+                    float maxRelativeWorldX = bounds.max.x - minX;
+                    float maxRelativeWorldZ = bounds.max.z - minZ;
+
+                    float minRelativeScreenX = trueScale * minRelativeWorldX;
+                    float minRelativeScreenY = trueScale * minRelativeWorldZ;
+                    float maxRelativeScreenX = trueScale * maxRelativeWorldX;
+                    float maxRelativeScreenY = trueScale * maxRelativeWorldZ;
+
+                    float minScreenX = mapTopLeft.x + minRelativeScreenX;
+                    float minScreenY = mapBottomRight.y - minRelativeScreenY;
+                    float maxScreenX = mapTopLeft.x + maxRelativeScreenX;
+                    float maxScreenY = mapBottomRight.y - maxRelativeScreenY;
+
+                    PathD path = new PathD([
+                        new PointD(minScreenX, minScreenY),
+                        new PointD(minScreenX, maxScreenY),
+                        new PointD(maxScreenX, maxScreenY),
+                        new PointD(maxScreenX, minScreenY),
+                    ]);
+                    boundsPaths.Add(path);
+                }
+
+                PathsD union = Clipper.Union(boundsPaths, FillRule.NonZero);
+                foreach (PathD path in union)
+                {
+                    foreach (PointD point in path)
+                    {
+                        imDrawList.PathLineTo(new Vector2((float)point.x, (float)point.y));
+                    }
+
+                    imDrawList.PathStroke(Colors[i % Colors.Length], ImDrawFlags.Closed);
+                }
+
+                string mapName = childScene.name;
+                if (mapName.StartsWith(rootSceneName + "_"))
+                {
+                    mapName = mapName[(rootSceneName.Length + 1)..];
+                }
+                
+                string areaText = $"""
+                                   {mapName}
+                                   Coins: XX/YY (ZZ%)
+                                   Fish:  XX/YY (ZZ%)
+                                   """;
+                Vector2 areaTextSize = ImGui.CalcTextSize(areaText);
+                
+                RectD screenBounds = Clipper.GetBounds(union);
+                Vector2 centerPoint = new Vector2(
+                    (float)(screenBounds.left + screenBounds.right) / 2.0f,
+                    (float)(screenBounds.top + screenBounds.bottom) / 2.0f
+                );
+
+                Vector2 textPos = centerPoint - (areaTextSize * 0.5f);
+                imDrawList.AddText(textPos, Colors[i % Colors.Length], areaText);
+            }
+
+            float playerRelativeWorldX = Manager._instance._primaryPlayerMachine._position.x - minX;
+            float playerRelativeWorldZ = Manager._instance._primaryPlayerMachine._position.z - minZ;
+            float playerRelativeScreenX = trueScale * playerRelativeWorldX;
+            float playerRelativeScreenY = trueScale * playerRelativeWorldZ;
+            float playerScreenX = mapTopLeft.x + playerRelativeScreenX;
+            float playerScreenY = mapBottomRight.y - playerRelativeScreenY;
+
+            float playerAngle = Manager._instance._primaryPlayerMachine._artRotator.rotation.eulerAngles.y;
+            float playerSin = Mathf.Sin(playerAngle * Mathf.Deg2Rad);
+            float playerCos = Mathf.Cos(playerAngle * Mathf.Deg2Rad);
+            foreach (Vector2 arrowPoint in Arrow)
+            {
+                float rx = (arrowPoint.x * playerCos) - (arrowPoint.y * playerSin);
+                float ry = (arrowPoint.x * playerSin) + (arrowPoint.y * playerCos);
+                
+                Vector2 actualPoint = new Vector2(playerScreenX + rx, playerScreenY + ry);
+                imDrawList.PathLineTo(actualPoint);
+            }
+            imDrawList.PathStroke(ImGui.GetColorU32(new Vector4(1.0f, 0.0f, 0.0f, 1.0f)), ImDrawFlags.Closed, 2.0f);
+            
+            imDrawList.PopClipRect();
+        }
+        ImGui.End();
+    }
+}
