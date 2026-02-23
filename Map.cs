@@ -88,12 +88,15 @@ public sealed class Map : ManagedBehaviour
             
             Vector3 currentPosition = Manager._instance._primaryPlayerMachine._position;
 
+            // TODO cache all this data per-AreaDefinition
             float minX = Single.PositiveInfinity;
             float maxX = Single.NegativeInfinity;
             float minZ = Single.PositiveInfinity;
             float maxZ = Single.NegativeInfinity;
             Dictionary<SceneData, List<Collider>> entranceColliders = new();
             Dictionary<SceneData, List<Bounds>> entranceBounds = new();
+            Dictionary<SceneData, Collectible[]> collectibles = new();
+            Dictionary<SceneData, Capturable[]> capturables = new();
             
             foreach (var (sceneData, sceneParent) in sceneParents)
             {
@@ -125,6 +128,9 @@ public sealed class Map : ManagedBehaviour
                             minZ = Math.Min(minZ, thisMinZ);
                             maxZ = Math.Max(maxZ, thisMaxZ);
                         }
+
+                        collectibles[sceneData] = sceneParent._activeParent.GetComponentsInChildren<Collectible>(true);
+                        capturables[sceneData] = sceneParent._activeParent.GetComponentsInChildren<Capturable>(true);
                     }
                 }
             }
@@ -201,11 +207,20 @@ public sealed class Map : ManagedBehaviour
                 {
                     mapName = mapName[(rootSceneName.Length + 1)..];
                 }
-                
+
+                int numCoinsCollected = collectibles[childScene].Count(collectible => collectible._collected);
+                int numCoinsTotal = collectibles[childScene].Length;
+                float numCoinsFraction = (float)numCoinsCollected / (float)numCoinsTotal;
+                int numCoinsPercent = (int)(numCoinsFraction * 100);
+                int numCapturablesCollected = capturables[childScene].Count(capturable => capturable._state == Capturable.State.Captured);
+                int numCapturablesTotal = capturables[childScene].Length;
+                float numCapturablesFraction = (float)numCapturablesCollected / (float)numCapturablesTotal;
+                int numCapturablesPercent = (int)(numCapturablesFraction * 100);
+
                 string areaText = $"""
                                    {mapName}
-                                   Coins: XX/YY (ZZ%)
-                                   Fish:  XX/YY (ZZ%)
+                                   Coins: {numCoinsCollected,3}/{numCoinsTotal,3} ({numCoinsPercent,3}%)
+                                   Fish:  {numCapturablesCollected,3}/{numCapturablesTotal,3} ({numCapturablesPercent,3}%)
                                    """;
                 Vector2 areaTextSize = ImGui.CalcTextSize(areaText);
                 
