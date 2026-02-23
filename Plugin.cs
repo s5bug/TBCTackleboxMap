@@ -33,31 +33,43 @@ public class Plugin : BaseUnityPlugin
         Map._imgui = __instance._imgui;
         Manager.GetBehaviourUpdater().MarkForRegister(Map);
     }
-    
+
+    private static MethodInfo behaviourSetEnabledMethod =
+        AccessTools.DeclaredPropertySetter(typeof(Behaviour), nameof(Behaviour.enabled));
     [HarmonyPatch(typeof(DebugMenu), nameof(DebugMenu.ManagedUpdate))]
     [HarmonyTranspiler]
     static IEnumerable<CodeInstruction> DontDisableImGui(IEnumerable<CodeInstruction> instructions)
     {
         // replace the second load of the flag with a true load
-        var index = 0;
-        foreach (var instruction in instructions)
+        using (var instructionEnum = instructions.GetEnumerator())
         {
-            if (instruction.IsLdloc())
+            while (instructionEnum.MoveNext())
             {
-                if (index == 1)
+                var inst1 = instructionEnum.Current;
+                if (inst1.IsLdloc() && instructionEnum.MoveNext())
                 {
-                    yield return new CodeInstruction(OpCodes.Ldc_I4_1);
+                    var inst2 = instructionEnum.Current;
+                    if (inst2.Calls(behaviourSetEnabledMethod))
+                    {
+                        yield return new CodeInstruction(OpCodes.Ldc_I4_1);
+                        yield return inst2;
+                        break;
+                    }
+                    else
+                    {
+                        yield return inst1;
+                        yield return inst2;
+                    }
                 }
                 else
                 {
-                    yield return instruction;
+                    yield return inst1;
                 }
-
-                index++;
             }
-            else
+
+            while (instructionEnum.MoveNext())
             {
-                yield return instruction;
+                yield return instructionEnum.Current;
             }
         }
     }
