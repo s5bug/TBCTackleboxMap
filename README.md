@@ -1,5 +1,11 @@
 ﻿# TBCTackleboxMap
 
+Shows a map with progress for each location
+- on the pause screen, toggled by pressing Lockon
+- in-game, enabled by holding Tether and Interact
+
+![Screenshot of pause screen with Map enabled](https://elixi.re/i/76kav.png)
+
 ## development
 
 Edit `TBCTackleboxMap.csproj.user` correcting the path to your The Big Catch Tacklebox folder. An example

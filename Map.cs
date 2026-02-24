@@ -224,11 +224,17 @@ public sealed class Map : ManagedBehaviour
                 float numCapturablesFraction = (float)numCapturablesCollected / (float)numCapturablesTotal;
                 int numCapturablesPercent = (int)(numCapturablesFraction * 100);
 
-                string areaText = $"""
-                                   {mapName}
-                                   Coins: {numCoinsCollected,3}/{numCoinsTotal,3} ({numCoinsPercent,3}%)
-                                   Fish:  {numCapturablesCollected,3}/{numCapturablesTotal,3} ({numCapturablesPercent,3}%)
-                                   """;
+                string areaText = mapName;
+                if (numCoinsTotal != 0)
+                {
+                    areaText += $"\nCoins: {numCoinsCollected,3}/{numCoinsTotal,3} ({numCoinsPercent,3}%)";
+                }
+                if (numCapturablesTotal != 0)
+                {
+                    areaText +=
+                        $"\nFish:  {numCapturablesCollected,3}/{numCapturablesTotal,3} ({numCapturablesPercent,3}%)";
+                }
+                
                 Vector2 areaTextSize = ImGui.CalcTextSize(areaText);
                 
                 RectD screenBounds = Clipper.GetBounds(screenPaths);
